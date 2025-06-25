@@ -270,6 +270,30 @@ elif module == "User Access Management":
 
     # --- Mapping Step ---
     st.subheader("📂 Upload Files for Mapping")
+    with st.expander("ℹ️ Click here for instructions"):
+     st.markdown("""
+    ### 📝 Steps to Perform Before Downloading:
+    
+    1. **Upload Required Files**  
+       - First, upload the **HR file**, **User Access list**, and optionally the **AD data**.
+    
+    2. **Sheet Selection**  
+       - For Excel uploads, select the sheet in which your relevant data is stored.
+    
+    3. **Key Column Matching**  
+       - Choose the **common key columns** (e.g., *Employee Code*, *Email ID*) to map the datasets together correctly.
+    
+    4. **Column Mapping**  
+       - Select additional fields you want to join from HR or AD into the user access data.
+    
+    5. **Download Options**  
+       - Choose between `Full Dataset` or `Selected Columns Only`.
+       - If `Selected Columns Only`, select the specific columns you wish to include in the export.
+    
+    6. **Export**  
+       - Click the download button to export the processed and merged data.
+    """)
+    
     uploaded_hr_file = st.file_uploader("Upload HR Data File", type=["xlsx", "csv"], key="hr")
     uploaded_access_file = st.file_uploader("Upload User Access File", type=["xlsx", "csv"], key="access")
     uploaded_ad_file = st.file_uploader("Upload AD Data File (optional)", type=["xlsx", "csv"], key="ad")
@@ -277,6 +301,21 @@ elif module == "User Access Management":
     if uploaded_hr_file and uploaded_access_file:
         hr_df = read_file(uploaded_hr_file, "HR Data Preview")
         access_df = read_file(uploaded_access_file, "User Access Data Preview")
+        def safe_merge(left, right, l_key, r_key, keep_suffix):
+    # Normalize keys to string, strip spaces, and upper case
+            for df, k in [(left, l_key), (right, r_key)]:
+                df[k] = (df[k].astype(str)
+                        .str.strip()
+                        .str.upper()
+                        .replace({'': pd.NA, 'NAN': pd.NA}))
+                merged = pd.merge(
+                left, right,
+                left_on=l_key, right_on=r_key,
+                how='left', indicator=True,
+                suffixes=('', keep_suffix)
+                )
+            st.write("🔍 Merge Status:", merged['_merge'].value_counts())
+            return merged.drop(columns=['_merge', r_key] if r_key != l_key else ['_merge'])
 
         if hr_df is not None and access_df is not None:
             # HR join selection
@@ -288,7 +327,8 @@ elif module == "User Access Management":
             hr_filtered = hr_df[hr_columns]
             access_df[access_hr_key] = access_df[access_hr_key].astype(str)
             hr_filtered[hr_key] = hr_filtered[hr_key].astype(str)
-            matched_data = pd.merge(access_df, hr_filtered, left_on=access_hr_key, right_on=hr_key, how="left")
+            matched_data = safe_merge(access_df, hr_filtered, access_hr_key, hr_key, '_HR')
+
             if hr_key in matched_data.columns and hr_key != access_hr_key:
                 matched_data.drop(columns=[hr_key], inplace=True)
 
@@ -305,7 +345,8 @@ elif module == "User Access Management":
                     if ad_key in ad_filtered.columns and access_ad_key in matched_data.columns:
                         matched_data[access_ad_key] = matched_data[access_ad_key].astype(str)
                         ad_filtered[ad_key] = ad_filtered[ad_key].astype(str)
-                        matched_data = pd.merge(matched_data, ad_filtered, left_on=access_ad_key, right_on=ad_key, how='left')
+                        matched_data = safe_merge(matched_data, ad_filtered, access_ad_key, ad_key, '_AD')
+
                         if ad_key in matched_data.columns and ad_key != access_ad_key:
                             matched_data.drop(columns=[ad_key], inplace=True)
                     else:
@@ -335,37 +376,106 @@ elif module == "User Access Management":
                     mime="text/csv"
                 )
 
-            # --- Dormancy ---
+           # --- Dormancy ---
             st.markdown("---")
             st.subheader("📅 Dormancy & GAP Analysis")
 
             date_col = st.selectbox("Select the Last Logon Date Column for GAP Calculation", matched_data.columns)
+
             if date_col:
                 try:
                     matched_data[date_col] = pd.to_datetime(matched_data[date_col], errors="coerce")
-                    max_date = matched_data[date_col].max()
-                    st.info(f"Latest date in selected column: **{max_date.date()}**")
-                    formatted_date = max_date.strftime("%d-%m-%Y")
+
+                    # Allow user to input custom date
+                    use_custom_date = st.checkbox("Use custom last login threshold date")
+
+                    if use_custom_date:
+                        custom_date = st.date_input("Select custom 'As Of' date for dormancy calculation", value=datetime.date.today())
+                        threshold_base_date = pd.to_datetime(custom_date)
+                    else:
+                        threshold_base_date = matched_data[date_col].max()
+                        st.info(f"Latest date in selected column: **{threshold_base_date.date()}**")
+
+                    formatted_date = threshold_base_date.strftime("%d-%m-%Y")
                     gap_col_name = f"GAP_{formatted_date}"
-                    matched_data[gap_col_name] = (max_date - matched_data[date_col]).dt.days
-                    # matched_data["GAP"] = (max_date - matched_data[date_col]).dt.days
+                    matched_data[gap_col_name] = (threshold_base_date - matched_data[date_col]).dt.days
+
                     st.success("✅ Last Login GAP column calculated and added.")
 
-                    # Ask user for threshold
+                    # Threshold input
                     threshold = st.number_input("Enter dormancy threshold (in days)", min_value=1, value=30)
 
-                    # Apply threshold to the GAP column
+                    # Filter records exceeding threshold
                     if gap_col_name in matched_data.columns:
                         dormant_df = matched_data[matched_data[gap_col_name] > threshold]
+                        dormant_count = len(dormant_df)
+                        total_count = len(matched_data)
+                        within_count = total_count - dormant_count
 
-                        if not dormant_df.empty:
-                            st.warning(f"⚠️ {len(dormant_df)} record(s) exceeded the dormancy threshold of {threshold} days.")
+                        if dormant_count > 0:
+                            st.warning(f"⚠️ {dormant_count} record(s) exceeded the dormancy threshold of {threshold} days.")
                             st.dataframe(dormant_df, height=200, use_container_width=True)
 
-                            # Create downloadable Excel file
+                            # 📊 Pie chart of threshold results
+                            st.subheader("📈 Records Exceeding vs Within Threshold")
+
+                            import matplotlib.pyplot as plt
                             from io import BytesIO
+                            import streamlit as st
+
+                            # Pie chart data
+                            sizes = [dormant_count, within_count]
+                            labels = ["Exceeded", "Within"]
+                            colors = ["#ff6666", "#66b3ff"]
+
+                            # Create a larger, clearer figure with white background
+                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')  # ~375px x 375px
+
+                            # Plot the pie
+                            wedges, texts, autotexts = ax.pie(
+                                sizes,
+                                labels=None,
+                                autopct='%.1f%%',
+                                startangle=90,
+                                colors=colors,
+                                textprops={'fontsize': 10, 'color': 'black'}
+                            )
+                            ax.axis('equal')
+
+                            # Add readable legend below chart
+                            ax.legend(
+                                wedges,
+                                [f"{labels[i]} ({sizes[i]})" for i in range(len(labels))],
+                                loc='lower center',
+                                fontsize=10,
+                                frameon=False,
+                                bbox_to_anchor=(0.5, -0.15),
+                                ncol=2
+                            )
+
+                            # Save to buffer
+                            buf = BytesIO()
+                            fig.savefig(buf, format="png", bbox_inches='tight', facecolor='white')
+                            buf.seek(0)
+
+                            # Show image in Streamlit with suitable width
+                            st.image(buf, width=375)
+
+
+
+
+                            # ⬇️ Download Options
+                            st.markdown("### ⬇️ Download Dormancy Observations")
+                            option = st.radio("Select download type", ["Full Dataset", "Selected Columns Only"], key="dormancy_dl")
+
+                            if option == "Selected Columns Only":
+                                sel_cols = st.multiselect("Select columns to include", dormant_df.columns.tolist(), key="dormancy_cols")
+                                export_df = dormant_df[sel_cols]
+                            else:
+                                export_df = dormant_df
+
                             buffer = BytesIO()
-                            dormant_df.to_excel(buffer, index=False)
+                            export_df.to_excel(buffer, index=False)
                             buffer.seek(0)
 
                             st.download_button(
@@ -374,62 +484,13 @@ elif module == "User Access Management":
                                 file_name=f"dormancy_observations_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
+
                         else:
                             st.success("✅ No records exceeded the dormancy threshold.")
 
                 except Exception as e:
                     st.error(f"Error processing GAP calculation: {e}")
-                
-            # --- AD-HR Join Date Difference ---
-            # --- Custom Join Date Differences ---
-            st.markdown("---")
-            st.subheader("➕ Add Custom Date Difference Columns")
 
-            # Initialize dynamic config store
-            if "custom_diffs" not in st.session_state:
-                st.session_state.custom_diffs = []
-
-            # Form to add new difference column
-            with st.form("date_diff_form", clear_on_submit=True):
-                diff_col_name = st.text_input("Enter name for the new difference column (e.g., AD-HR)")
-                date_col1 = st.selectbox("Select first (recent) date column", matched_data.columns, key="col1")
-                date_col2 = st.selectbox("Select second (earlier) date column", matched_data.columns, key="col2")
-                add_btn = st.form_submit_button("➕ Add Date Difference Column")
-
-                if add_btn:
-                    if diff_col_name and date_col1 and date_col2:
-                        st.session_state.custom_diffs.append({
-                            "name": diff_col_name,
-                            "col1": date_col1,
-                            "col2": date_col2
-                        })
-                    else:
-                        st.warning("⚠️ Please enter a name and select both columns.")
-
-            # Calculate and add each custom date difference column
-            for entry in st.session_state.custom_diffs:
-                try:
-                    matched_data[entry["col1"]] = pd.to_datetime(matched_data[entry["col1"]], errors="coerce")
-                    matched_data[entry["col2"]] = pd.to_datetime(matched_data[entry["col2"]], errors="coerce")
-                    matched_data[entry["name"]] = (matched_data[entry["col1"]] - matched_data[entry["col2"]]).dt.days
-                    st.success(f"✅ '{entry['name']}' column calculated successfully.")
-                except Exception as e:
-                    st.error(f"Error calculating {entry['name']}: {e}")
-
-            # --- Final Output ---
-            st.subheader("📊 Final Data with GAP and Date Difference Columns")
-            st.dataframe(matched_data.head(), use_container_width=True)
-
-            output_buffer = io.BytesIO()
-            with pd.ExcelWriter(output_buffer, engine="xlsxwriter") as writer:
-                matched_data.to_excel(writer, index=False, sheet_name="User Access Review")
-
-            st.download_button(
-                label="📥 Download Final File with GAP & Date Differences",
-                data=output_buffer.getvalue(),
-                file_name=f"User_Access_Reviewed_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
 
             # --- Random Sampling ---
             st.markdown("---")
@@ -492,6 +553,48 @@ elif module == "User Access Management":
                     st.error(f"Error during multiple roles check: {e}")
 
 
+            # -------------------------
+            # 📉 DATA COMPLETENESS CHECK
+            # -------------------------
+            elif module == "Data Completeness Check":
+                st.subheader("📉 Data Completeness Check")
+                uploaded_file = st.file_uploader("Upload File to Check for Nulls (CSV or Excel)", type=["csv", "xlsx"])
+
+                if uploaded_file:
+                    if uploaded_file.name.endswith(".csv"):
+                        df = pd.read_csv(uploaded_file)
+                    else:
+                        df = pd.read_excel(uploaded_file)
+
+                    st.write("📋 Preview of Uploaded Data:")
+                    st.dataframe(df.head(), use_container_width=True)
+
+                    # Count nulls and blanks
+                    st.subheader("📊 Null or Empty Cell Summary")
+                    null_summary = df.isnull().sum()
+                    empty_summary = (df.applymap(lambda x: str(x).strip() == '')).sum()
+
+                    summary_df = pd.DataFrame({
+                        "Total Rows": len(df),
+                        "Null Cells": null_summary,
+                        "Empty Strings": empty_summary,
+                        "Combined Missing": null_summary + empty_summary
+                    })
+
+                    import ace_tools as tools
+                    tools.display_dataframe_to_user("Missing Data Summary", summary_df)
+
+                    # 📥 Download
+                    buffer = BytesIO()
+                    summary_df.to_excel(buffer, index=True)
+                    buffer.seek(0)
+
+                    st.download_button(
+                        label="📥 Download Missing Value Summary",
+                        data=buffer,
+                        file_name="missing_data_summary.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
 
 
