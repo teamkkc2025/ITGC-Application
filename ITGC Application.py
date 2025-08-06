@@ -664,6 +664,34 @@ elif module == "User Access Management":
                     st.error(f"Error during user-role sampling: {e}")
             else:
                 st.warning("⚠️ Please select both User Identifier and Role columns to enable sampling")
+            # --- AD-HR Join Date Difference (Dynamic) ---
+            st.markdown("---")
+            st.subheader("📐 Date Difference Calculator")
+            
+            # Initialise list in session state
+            if "diff_pairs" not in st.session_state:
+                st.session_state.diff_pairs = [("ad_date", "hr_date")]  # default first pair
+            
+            # Add new pair on "+" button click
+            if st.button("➕ Add Difference"):
+                st.session_state.diff_pairs.append((None, None))
+            
+            # Loop through each pair and get user selections
+            for idx, (col_a, col_b) in enumerate(st.session_state.diff_pairs):
+                st.markdown(f"**Difference {idx+1}**")
+                col1 = st.selectbox(f"Select Column A", matched_data.columns, key=f"colA_{idx}")
+                col2 = st.selectbox(f"Select Column B", matched_data.columns, key=f"colB_{idx}")
+            
+                if col1 and col2:
+                    try:
+                        matched_data[col1] = pd.to_datetime(matched_data[col1], errors="coerce")
+                        matched_data[col2] = pd.to_datetime(matched_data[col2], errors="coerce")
+                        diff_col_name = f"{col1}-{col2}_Days"
+                        matched_data[diff_col_name] = (matched_data[col1] - matched_data[col2]).dt.days
+                        st.success(f"✅ '{diff_col_name}' column calculated and added.")
+                    except Exception as e:
+                        st.error(f"Error calculating {col1}-{col2} difference: {e}")
+            
 
             # --- Multiple Roles Check ---
             st.markdown("---")
@@ -786,3 +814,4 @@ elif module == "User Access Management":
                         st.success("✅ No common roles between IT and non-IT users.")
                 except Exception as e:
                     st.error(f"Error during IT vs Non-IT access comparison: {e}")
+
