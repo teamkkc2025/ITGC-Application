@@ -589,7 +589,35 @@ elif module == "User Access Management":
 
                 except Exception as e:
                     st.error(f"Error processing GAP calculation: {e}")
+                    
+            # --- AD-HR Join Date Difference ---
+            st.markdown("---")
+            st.subheader("📐 AD - HR Joining Date Difference")
+            ad_join_col = st.selectbox("Select AD Joining Date Column", matched_data.columns, key="ad_date")
+            hr_join_col = st.selectbox("Select HR Joining Date Column", matched_data.columns, key="hr_date")
 
+            if ad_join_col and hr_join_col:
+                try:
+                    matched_data[ad_join_col] = pd.to_datetime(matched_data[ad_join_col], errors="coerce")
+                    matched_data[hr_join_col] = pd.to_datetime(matched_data[hr_join_col], errors="coerce")
+                    matched_data["AD-HR"] = (matched_data[ad_join_col] - matched_data[hr_join_col]).dt.days
+                    st.success("✅ 'AD-HR' column calculated and added.")
+                except Exception as e:
+                    st.error(f"Error calculating AD-HR difference: {e}")
+
+            st.subheader("📊 Final Data with GAP and AD-HR Columns")
+            st.dataframe(matched_data.head())
+
+            output_buffer = io.BytesIO()
+            with pd.ExcelWriter(output_buffer, engine="xlsxwriter") as writer:
+                matched_data.to_excel(writer, index=False, sheet_name="User Access Review")
+
+            st.download_button(
+                label="📥 Download Final File with GAP & AD-HR",
+                data=output_buffer.getvalue(),
+                file_name=f"User_Access_Reviewed_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
             # --- Random Sampling ---
             st.markdown("---")
@@ -814,4 +842,5 @@ elif module == "User Access Management":
                         st.success("✅ No common roles between IT and non-IT users.")
                 except Exception as e:
                     st.error(f"Error during IT vs Non-IT access comparison: {e}")
+
 
