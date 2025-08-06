@@ -79,76 +79,26 @@ if module == "Change Management":
         st.dataframe(st.session_state.df_checked)
 
         st.subheader("🎯 Sampling Section")
+        sampling_column = st.selectbox("Select Column for Sampling", st.session_state.df_checked.columns.tolist())
+        sample_size = st.number_input("Number of Samples", min_value=1, max_value=len(st.session_state.df_checked), value=5, step=1)
+        method = st.selectbox("Sampling Method", ["Top N (Longest)", "Bottom N (Quickest)", "Random"])
 
-        # Initialize column count
-        if "num_columns" not in st.session_state:
-            st.session_state.num_columns = 1
-
-        # Button to add more unique columns
-        if st.button("➕ Add Another Unique Column"):
-            st.session_state.num_columns += 1
-
-        # Dynamic selectboxes to define uniqueness
-        selected_cols = []
-        for i in range(st.session_state.num_columns):
-            col = st.selectbox(
-                f"Select Unique Column {i+1}",
-                st.session_state.df_checked.columns.tolist(),
-                key=f"sampling_col_{i}"
-            )
-            if col:
-                selected_cols.append(col)
-
-        # Remove duplicates in selection
-        sampling_columns = list(set(selected_cols))
-
-        if sampling_columns:
-            # Step 1: Get unique combinations
-            unique_combinations = st.session_state.df_checked.drop_duplicates(subset=sampling_columns)
-            st.info(f"✅ Found {len(unique_combinations)} unique combinations based on {sampling_columns}")
-
-            # Step 2: Sampling parameters
-            sample_size = st.number_input(
-                "Number of Unique Combinations to Sample",
-                min_value=1,
-                max_value=len(unique_combinations),
-                value=min(5, len(unique_combinations)),
-                step=1
-            )
-
-            method = st.selectbox("Sampling Method", ["Top N (Longest)", "Bottom N (Quickest)", "Random"])
-
-            # Step 3: Perform sampling
-            if method in ["Top N (Longest)", "Bottom N (Quickest)"]:
-                if "days_to_resolve" in unique_combinations.columns:
-                    ascending = method == "Bottom N (Quickest)"
-                    sampled_keys = unique_combinations.sort_values(by="days_to_resolve", ascending=ascending).head(sample_size)
-                else:
-                    st.error("❌ 'days_to_resolve' column not available for sorting.")
-                    sampled_keys = pd.DataFrame()
-            else:
-                sampled_keys = unique_combinations.sample(n=sample_size, random_state=42)
-
-            if not sampled_keys.empty:
-                # Step 4: Merge sampled keys with full data
-                sampled_df = st.session_state.df_checked.merge(sampled_keys, on=sampling_columns, how="inner")
-
-                st.success(f"✅ Sampled {len(sampled_df)} records from {sample_size} unique combinations")
-                st.dataframe(sampled_df, use_container_width=True)
-
-                # Step 5: Download
-                sample_output = BytesIO()
-                sampled_df.to_excel(sample_output, index=False)
-                sample_output.seek(0)
-
-                st.download_button(
-                    label="📥 Download Sampled Records",
-                    data=sample_output,
-                    file_name="sampled_requests.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+        if method == "Top N (Longest)":
+            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=False).head(sample_size)
+        elif method == "Bottom N (Quickest)":
+            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=True).head(sample_size)
         else:
-            st.warning("⚠️ Please select at least one unique column to proceed with sampling.")
+            sample_df = st.session_state.df_checked.sample(n=sample_size, random_state=1)
+
+        st.write("📊 Sampled Records")
+        st.dataframe(sample_df)
+
+        sample_output = BytesIO()
+        sample_df.to_excel(sample_output, index=False)
+        sample_output.seek(0)
+        st.download_button("📥 Download Sample Records", data=sample_output,
+                           file_name="sampled_requests.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # -------------------------
 # 🧯 INCIDENT MANAGEMENT FLOW
@@ -205,73 +155,19 @@ elif module == "Incident Management":
                                file_name="updated_incidents.csv", mime="text/csv")
 
             # 🔁 Random Sampling
-            # 🔁 Enhanced Unique-Based Sampling
-            st.subheader("🎯 Random Sampling Based on Unique Combinations")
+            st.subheader("🎯 Random Sampling")
+            sample_size = st.number_input("Number of Random Samples", min_value=1, max_value=len(df), value=5)
+            if st.button("Generate Incident Sample"):
+                sample_df = df.sample(n=sample_size, random_state=42)
+                st.dataframe(sample_df,height=300, use_container_width=True)
 
-            # Step 1: Initialize state for dynamic unique columns
-            if "incident_num_columns" not in st.session_state:
-                st.session_state.incident_num_columns = 1
-
-            # Step 2: Add unique column button
-            if st.button("➕ Add Another Unique Column"):
-                st.session_state.incident_num_columns += 1
-
-            # Step 3: Generate selectboxes dynamically
-            selected_cols = []
-            for i in range(st.session_state.incident_num_columns):
-                col = st.selectbox(
-                    f"Select Unique Column {i+1}",
-                    df.columns.tolist(),
-                    key=f"incident_sampling_col_{i}"
-                )
-                if col:
-                    selected_cols.append(col)
-
-            sampling_columns = list(set(selected_cols))  # remove duplicates
-
-            if sampling_columns:
-                unique_combinations = df.drop_duplicates(subset=sampling_columns)
-                st.info(f"✅ Found {len(unique_combinations)} unique combinations based on {sampling_columns}")
-
-                sample_size = st.number_input(
-                    "Number of Unique Combinations to Sample",
-                    min_value=1,
-                    max_value=len(unique_combinations),
-                    value=min(5, len(unique_combinations)),
-                    step=1
-                )
-
-                method = st.selectbox("Sampling Method", ["Top N (Start-Resolved)", "Bottom N (Start-Resolved)", "Random"])
-
-                # Step 4: Perform sampling
-                if method in ["Top N (Start-Resolved)", "Bottom N (Start-Resolved)"]:
-                    if "Start-Resolved" in unique_combinations.columns:
-                        ascending = method == "Bottom N (Start-Resolved)"
-                        sampled_keys = unique_combinations.sort_values(by="Start-Resolved", ascending=ascending).head(sample_size)
-                    else:
-                        st.error("❌ 'Start-Resolved' column not available for sorting.")
-                        sampled_keys = pd.DataFrame()
-                else:
-                    sampled_keys = unique_combinations.sample(n=sample_size, random_state=42)
-
-                # Step 5: Merge sampled keys with original data
-                if not sampled_keys.empty:
-                    sampled_df = df.merge(sampled_keys, on=sampling_columns, how="inner")
-
-                    st.success(f"✅ Sampled {len(sampled_df)} records from {sample_size} unique combinations.")
-                    st.dataframe(sampled_df, height=300, use_container_width=True)
-
-                    sample_buffer = BytesIO()
-                    sampled_df.to_csv(sample_buffer, index=False)
-                    st.download_button(
-                        "📥 Download Sample Records",
-                        data=sample_buffer.getvalue(),
-                        file_name="incident_sample.csv",
-                        mime="text/csv"
-                    )
-            else:
-                st.warning("⚠️ Please select at least one unique column to proceed with sampling.")
-
+                sample_buffer = BytesIO()
+                sample_df.to_csv(sample_buffer, index=False)
+                st.download_button("📥 Download Sample Records", data=sample_buffer.getvalue(),
+                                   file_name="incident_sample.csv", mime="text/csv")
+                
+            st.subheader("⚠️ Risk Category Threshold Check")
+            risk_col = st.selectbox("Select Risk Level Column", df.columns)
 
             if risk_col:
                 # Extract last word (risk level) regardless of delimiter or format
@@ -481,12 +377,6 @@ elif module == "User Access Management":
                 )
 
             # --- Dormancy ---
-            import pandas as pd
-            import datetime
-            from io import BytesIO
-            import matplotlib.pyplot as plt
-            import streamlit as st
-
             st.markdown("---")
             st.subheader("📅 Dormancy & GAP Analysis")
 
@@ -574,10 +464,10 @@ elif module == "User Access Management":
                             st.markdown("### 🔍 **Observation Summary**")
                             if status_filter_applied:
                                 observation_text = (
-                                    f"During dormancy analysis of our system, **{dormant_count} unique active users** "
-                                    f"have their dormancy exceed the **{threshold}-day threshold** by a range of "
+                                    f"During testing, we analyzed data extracts from the HRMS and Active Directory (AD) and identified inconsistencies. Specifically, last logon activity in User List, we found that approximately, **{dormant_count} unique active users** "
+                                    f"have their dormancy exceed the **{threshold}-day dormancy policy.** The duration of these overlaps ranged from "
                                     f"**{min_days_over} to {max_days_over} days**. These accounts are marked as active "
-                                    f"({', '.join(map(str, active_statuses))}) but have not logged in within the specified timeframe."
+                                    f"({', '.join(map(str, active_statuses))}) but have not logged in within the specified timeframe as mentioned in the dormancy policy."
                                 )
                             else:
                                 observation_text = (
@@ -611,13 +501,17 @@ elif module == "User Access Management":
                             st.subheader("📈 Records Exceeding vs Within Threshold")
                             st.caption(f"Analysis of {filter_description}")
 
+                            import matplotlib.pyplot as plt
+                            from io import BytesIO
+                            import streamlit as st
+
                             # Pie chart data
                             sizes = [dormant_count, within_count]
                             labels = ["Exceeded", "Within"]
                             colors = ["#ff6666", "#66b3ff"]
 
                             # Create a larger, clearer figure with white background
-                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')
+                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')  # ~375px x 375px
 
                             # Plot the pie
                             wedges, texts, autotexts = ax.pie(
@@ -674,29 +568,8 @@ elif module == "User Access Management":
                             else:
                                 export_df = dormant_df
 
-                            # Create Excel file with observation summary at the top
                             buffer = BytesIO()
-                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                # Create a summary sheet with observation text
-                                summary_data = {
-                                    'Dormancy Analysis Summary': [
-                                        f"Analysis Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                                        f"Threshold: {threshold} days",
-                                        f"Total Accounts Analyzed: {analysis_total}",
-                                        f"Accounts Exceeding Threshold: {dormant_count}",
-                                        f"Range of Days Over Threshold: {min_days_over} to {max_days_over} days",
-                                        "",
-                                        # Clean version of observation text (remove markdown formatting)
-                                        observation_text.replace("**", "").replace("*", "")
-                                    ]
-                                }
-                                
-                                summary_df = pd.DataFrame(summary_data)
-                                summary_df.to_excel(writer, sheet_name='Summary', index=False, header=False)
-                                
-                                # Add the actual data to a separate sheet
-                                export_df.to_excel(writer, sheet_name='Dormant_Accounts', index=False)
-
+                            export_df.to_excel(buffer, index=False)
                             buffer.seek(0)
 
                             file_suffix = "active_dormant" if status_filter_applied else "all_dormant"
@@ -716,6 +589,7 @@ elif module == "User Access Management":
 
                 except Exception as e:
                     st.error(f"Error processing GAP calculation: {e}")
+
 
             # --- Random Sampling ---
             st.markdown("---")
