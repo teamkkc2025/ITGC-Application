@@ -79,26 +79,76 @@ if module == "Change Management":
         st.dataframe(st.session_state.df_checked)
 
         st.subheader("🎯 Sampling Section")
-        sampling_column = st.selectbox("Select Column for Sampling", st.session_state.df_checked.columns.tolist())
-        sample_size = st.number_input("Number of Samples", min_value=1, max_value=len(st.session_state.df_checked), value=5, step=1)
-        method = st.selectbox("Sampling Method", ["Top N (Longest)", "Bottom N (Quickest)", "Random"])
 
-        if method == "Top N (Longest)":
-            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=False).head(sample_size)
-        elif method == "Bottom N (Quickest)":
-            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=True).head(sample_size)
+        # Initialize column count
+        if "num_columns" not in st.session_state:
+            st.session_state.num_columns = 1
+
+        # Button to add more unique columns
+        if st.button("➕ Add Another Unique Column"):
+            st.session_state.num_columns += 1
+
+        # Dynamic selectboxes to define uniqueness
+        selected_cols = []
+        for i in range(st.session_state.num_columns):
+            col = st.selectbox(
+                f"Select Unique Column {i+1}",
+                st.session_state.df_checked.columns.tolist(),
+                key=f"sampling_col_{i}"
+            )
+            if col:
+                selected_cols.append(col)
+
+        # Remove duplicates in selection
+        sampling_columns = list(set(selected_cols))
+
+        if sampling_columns:
+            # Step 1: Get unique combinations
+            unique_combinations = st.session_state.df_checked.drop_duplicates(subset=sampling_columns)
+            st.info(f"✅ Found {len(unique_combinations)} unique combinations based on {sampling_columns}")
+
+            # Step 2: Sampling parameters
+            sample_size = st.number_input(
+                "Number of Unique Combinations to Sample",
+                min_value=1,
+                max_value=len(unique_combinations),
+                value=min(5, len(unique_combinations)),
+                step=1
+            )
+
+            method = st.selectbox("Sampling Method", ["Top N (Longest)", "Bottom N (Quickest)", "Random"])
+
+            # Step 3: Perform sampling
+            if method in ["Top N (Longest)", "Bottom N (Quickest)"]:
+                if "days_to_resolve" in unique_combinations.columns:
+                    ascending = method == "Bottom N (Quickest)"
+                    sampled_keys = unique_combinations.sort_values(by="days_to_resolve", ascending=ascending).head(sample_size)
+                else:
+                    st.error("❌ 'days_to_resolve' column not available for sorting.")
+                    sampled_keys = pd.DataFrame()
+            else:
+                sampled_keys = unique_combinations.sample(n=sample_size, random_state=42)
+
+            if not sampled_keys.empty:
+                # Step 4: Merge sampled keys with full data
+                sampled_df = st.session_state.df_checked.merge(sampled_keys, on=sampling_columns, how="inner")
+
+                st.success(f"✅ Sampled {len(sampled_df)} records from {sample_size} unique combinations")
+                st.dataframe(sampled_df, use_container_width=True)
+
+                # Step 5: Download
+                sample_output = BytesIO()
+                sampled_df.to_excel(sample_output, index=False)
+                sample_output.seek(0)
+
+                st.download_button(
+                    label="📥 Download Sampled Records",
+                    data=sample_output,
+                    file_name="sampled_requests.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
         else:
-            sample_df = st.session_state.df_checked.sample(n=sample_size, random_state=1)
-
-        st.write("📊 Sampled Records")
-        st.dataframe(sample_df)
-
-        sample_output = BytesIO()
-        sample_df.to_excel(sample_output, index=False)
-        sample_output.seek(0)
-        st.download_button("📥 Download Sample Records", data=sample_output,
-                           file_name="sampled_requests.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.warning("⚠️ Please select at least one unique column to proceed with sampling.")
 
 # -------------------------
 # 🧯 INCIDENT MANAGEMENT FLOW
@@ -155,19 +205,73 @@ elif module == "Incident Management":
                                file_name="updated_incidents.csv", mime="text/csv")
 
             # 🔁 Random Sampling
-            st.subheader("🎯 Random Sampling")
-            sample_size = st.number_input("Number of Random Samples", min_value=1, max_value=len(df), value=5)
-            if st.button("Generate Incident Sample"):
-                sample_df = df.sample(n=sample_size, random_state=42)
-                st.dataframe(sample_df,height=300, use_container_width=True)
+            # 🔁 Enhanced Unique-Based Sampling
+            st.subheader("🎯 Random Sampling Based on Unique Combinations")
 
-                sample_buffer = BytesIO()
-                sample_df.to_csv(sample_buffer, index=False)
-                st.download_button("📥 Download Sample Records", data=sample_buffer.getvalue(),
-                                   file_name="incident_sample.csv", mime="text/csv")
-                
-            st.subheader("⚠️ Risk Category Threshold Check")
-            risk_col = st.selectbox("Select Risk Level Column", df.columns)
+            # Step 1: Initialize state for dynamic unique columns
+            if "incident_num_columns" not in st.session_state:
+                st.session_state.incident_num_columns = 1
+
+            # Step 2: Add unique column button
+            if st.button("➕ Add Another Unique Column"):
+                st.session_state.incident_num_columns += 1
+
+            # Step 3: Generate selectboxes dynamically
+            selected_cols = []
+            for i in range(st.session_state.incident_num_columns):
+                col = st.selectbox(
+                    f"Select Unique Column {i+1}",
+                    df.columns.tolist(),
+                    key=f"incident_sampling_col_{i}"
+                )
+                if col:
+                    selected_cols.append(col)
+
+            sampling_columns = list(set(selected_cols))  # remove duplicates
+
+            if sampling_columns:
+                unique_combinations = df.drop_duplicates(subset=sampling_columns)
+                st.info(f"✅ Found {len(unique_combinations)} unique combinations based on {sampling_columns}")
+
+                sample_size = st.number_input(
+                    "Number of Unique Combinations to Sample",
+                    min_value=1,
+                    max_value=len(unique_combinations),
+                    value=min(5, len(unique_combinations)),
+                    step=1
+                )
+
+                method = st.selectbox("Sampling Method", ["Top N (Start-Resolved)", "Bottom N (Start-Resolved)", "Random"])
+
+                # Step 4: Perform sampling
+                if method in ["Top N (Start-Resolved)", "Bottom N (Start-Resolved)"]:
+                    if "Start-Resolved" in unique_combinations.columns:
+                        ascending = method == "Bottom N (Start-Resolved)"
+                        sampled_keys = unique_combinations.sort_values(by="Start-Resolved", ascending=ascending).head(sample_size)
+                    else:
+                        st.error("❌ 'Start-Resolved' column not available for sorting.")
+                        sampled_keys = pd.DataFrame()
+                else:
+                    sampled_keys = unique_combinations.sample(n=sample_size, random_state=42)
+
+                # Step 5: Merge sampled keys with original data
+                if not sampled_keys.empty:
+                    sampled_df = df.merge(sampled_keys, on=sampling_columns, how="inner")
+
+                    st.success(f"✅ Sampled {len(sampled_df)} records from {sample_size} unique combinations.")
+                    st.dataframe(sampled_df, height=300, use_container_width=True)
+
+                    sample_buffer = BytesIO()
+                    sampled_df.to_csv(sample_buffer, index=False)
+                    st.download_button(
+                        "📥 Download Sample Records",
+                        data=sample_buffer.getvalue(),
+                        file_name="incident_sample.csv",
+                        mime="text/csv"
+                    )
+            else:
+                st.warning("⚠️ Please select at least one unique column to proceed with sampling.")
+
 
             if risk_col:
                 # Extract last word (risk level) regardless of delimiter or format
@@ -376,7 +480,13 @@ elif module == "User Access Management":
                     mime="text/csv"
                 )
 
-           # --- Dormancy ---
+            # --- Dormancy ---
+            import pandas as pd
+            import datetime
+            from io import BytesIO
+            import matplotlib.pyplot as plt
+            import streamlit as st
+
             st.markdown("---")
             st.subheader("📅 Dormancy & GAP Analysis")
 
@@ -402,26 +512,104 @@ elif module == "User Access Management":
 
                     st.success("✅ Last Login GAP column calculated and added.")
 
+                    # --- Status Column Selection ---
+                    st.markdown("### 🔍 Status Configuration")
+                    status_col = st.selectbox("Select the Status Column", 
+                                            ["None"] + list(matched_data.columns),
+                                            help="Select the column that contains account status information")
+
+                    # Initialize variables
+                    status_filter_applied = False
+                    active_statuses = []
+
+                    if status_col != "None":
+                        # Show unique status values
+                        unique_statuses = matched_data[status_col].dropna().unique().tolist()
+                        st.info(f"Found status values: {', '.join(map(str, unique_statuses))}")
+                        
+                        # Let user select which statuses represent "active" accounts
+                        active_statuses = st.multiselect(
+                            "Select which status values represent ACTIVE accounts",
+                            options=unique_statuses,
+                            help="Only accounts with these status values will be checked for dormancy"
+                        )
+                        
+                        if active_statuses:
+                            status_filter_applied = True
+                            active_count = matched_data[matched_data[status_col].isin(active_statuses)].shape[0]
+                            st.success(f"✅ Will analyze {active_count} accounts with active status: {', '.join(map(str, active_statuses))}")
+
                     # Threshold input
                     threshold = st.number_input("Enter dormancy threshold (in days)", min_value=1, value=30)
 
                     # Filter records exceeding threshold
                     if gap_col_name in matched_data.columns:
-                        dormant_df = matched_data[matched_data[gap_col_name] > threshold]
+                        # Apply status filter if configured
+                        if status_filter_applied:
+                            # Only check dormancy for accounts with active status
+                            analysis_df = matched_data[matched_data[status_col].isin(active_statuses)].copy()
+                            filter_description = f"active accounts (status: {', '.join(map(str, active_statuses))})"
+                        else:
+                            # Check all accounts
+                            analysis_df = matched_data.copy()
+                            filter_description = "all accounts"
+                        
+                        # Find dormant records
+                        dormant_condition = analysis_df[gap_col_name] > threshold
+                        dormant_df = analysis_df[dormant_condition].copy()
+                        
+                        # Add "Days Since Threshold" column
+                        days_since_threshold_col = f"Days_Since_{threshold}d_Threshold"
+                        dormant_df[days_since_threshold_col] = dormant_df[gap_col_name] - threshold
+                        
                         dormant_count = len(dormant_df)
-                        total_count = len(matched_data)
-                        within_count = total_count - dormant_count
+                        analysis_total = len(analysis_df)
+                        within_count = analysis_total - dormant_count
 
                         if dormant_count > 0:
-                            st.warning(f"⚠️ {dormant_count} record(s) exceeded the dormancy threshold of {threshold} days.")
-                            st.dataframe(dormant_df, height=200, use_container_width=True)
+                            # --- OBSERVATION SUMMARY ---
+                            min_days_over = dormant_df[days_since_threshold_col].min()
+                            max_days_over = dormant_df[days_since_threshold_col].max()
+                            
+                            st.markdown("### 🔍 **Observation Summary**")
+                            if status_filter_applied:
+                                observation_text = (
+                                    f"During dormancy analysis of our system, **{dormant_count} unique active users** "
+                                    f"have their dormancy exceed the **{threshold}-day threshold** by a range of "
+                                    f"**{min_days_over} to {max_days_over} days**. These accounts are marked as active "
+                                    f"({', '.join(map(str, active_statuses))}) but have not logged in within the specified timeframe."
+                                )
+                            else:
+                                observation_text = (
+                                    f"During dormancy analysis of our system, **{dormant_count} unique users** "
+                                    f"have their dormancy exceed the **{threshold}-day threshold** by a range of "
+                                    f"**{min_days_over} to {max_days_over} days**."
+                                )
+                            
+                            st.info(observation_text)
+                            st.markdown("---")
+                            
+                            if status_filter_applied:
+                                st.warning(f"⚠️ {dormant_count} ACTIVE account(s) exceeded the dormancy threshold of {threshold} days.")
+                                st.info(f"📊 Analysis scope: {analysis_total} {filter_description}")
+                            else:
+                                st.warning(f"⚠️ {dormant_count} account(s) exceeded the dormancy threshold of {threshold} days.")
+                            
+                            # Reorder columns to show key information first
+                            key_columns = []
+                            if status_col != "None":
+                                key_columns.append(status_col)
+                            key_columns.extend([date_col, gap_col_name, days_since_threshold_col])
+                            
+                            # Add remaining columns
+                            other_columns = [col for col in dormant_df.columns if col not in key_columns]
+                            display_columns = key_columns + other_columns
+                            
+                            st.dataframe(dormant_df[display_columns], height=200, use_container_width=True)
 
                             # 📊 Pie chart of threshold results
                             st.subheader("📈 Records Exceeding vs Within Threshold")
-
-                            import matplotlib.pyplot as plt
-                            from io import BytesIO
-                            import streamlit as st
+                            st.caption(f"Analysis of {filter_description}")
 
                             # Pie chart data
                             sizes = [dormant_count, within_count]
@@ -429,7 +617,7 @@ elif module == "User Access Management":
                             colors = ["#ff6666", "#66b3ff"]
 
                             # Create a larger, clearer figure with white background
-                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')  # ~375px x 375px
+                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')
 
                             # Plot the pie
                             wedges, texts, autotexts = ax.pie(
@@ -461,8 +649,17 @@ elif module == "User Access Management":
                             # Show image in Streamlit with suitable width
                             st.image(buf, width=375)
 
-
-
+                            # Summary statistics
+                            st.markdown("### 📊 Summary Statistics")
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Total Analyzed", analysis_total)
+                            with col2:
+                                st.metric("Exceeding Threshold", dormant_count)
+                            with col3:
+                                avg_days_over = dormant_df[days_since_threshold_col].mean()
+                                st.metric("Avg Days Over Threshold", f"{avg_days_over:.1f}")
 
                             # ⬇️ Download Options
                             st.markdown("### ⬇️ Download Dormancy Observations")
@@ -470,47 +667,129 @@ elif module == "User Access Management":
 
                             if option == "Selected Columns Only":
                                 sel_cols = st.multiselect("Select columns to include", dormant_df.columns.tolist(), key="dormancy_cols")
-                                export_df = dormant_df[sel_cols]
+                                if sel_cols:
+                                    export_df = dormant_df[sel_cols]
+                                else:
+                                    export_df = dormant_df
                             else:
                                 export_df = dormant_df
 
+                            # Create Excel file with observation summary at the top
                             buffer = BytesIO()
-                            export_df.to_excel(buffer, index=False)
+                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                # Create a summary sheet with observation text
+                                summary_data = {
+                                    'Dormancy Analysis Summary': [
+                                        f"Analysis Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                        f"Threshold: {threshold} days",
+                                        f"Total Accounts Analyzed: {analysis_total}",
+                                        f"Accounts Exceeding Threshold: {dormant_count}",
+                                        f"Range of Days Over Threshold: {min_days_over} to {max_days_over} days",
+                                        "",
+                                        # Clean version of observation text (remove markdown formatting)
+                                        observation_text.replace("**", "").replace("*", "")
+                                    ]
+                                }
+                                
+                                summary_df = pd.DataFrame(summary_data)
+                                summary_df.to_excel(writer, sheet_name='Summary', index=False, header=False)
+                                
+                                # Add the actual data to a separate sheet
+                                export_df.to_excel(writer, sheet_name='Dormant_Accounts', index=False)
+
                             buffer.seek(0)
 
+                            file_suffix = "active_dormant" if status_filter_applied else "all_dormant"
                             st.download_button(
                                 label="📥 Download Dormancy Observations",
                                 data=buffer.getvalue(),
-                                file_name=f"dormancy_observations_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
+                                file_name=f"dormancy_observations_{file_suffix}_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
 
                         else:
-                            st.success("✅ No records exceeded the dormancy threshold.")
+                            if status_filter_applied:
+                                st.success(f"✅ No active accounts exceeded the dormancy threshold of {threshold} days.")
+                                st.info(f"📊 Analyzed {analysis_total} {filter_description}")
+                            else:
+                                st.success("✅ No records exceeded the dormancy threshold.")
 
                 except Exception as e:
                     st.error(f"Error processing GAP calculation: {e}")
 
-
             # --- Random Sampling ---
             st.markdown("---")
             st.subheader("🎯 Random Sampling")
-            sample_size = st.number_input("Enter number of random samples to extract", min_value=1, max_value=len(matched_data), value=5)
 
-            if st.button("Generate Sample"):
-                sample_df = matched_data.sample(n=sample_size, random_state=42)
-                st.dataframe(sample_df)
+            # Add column selectors similar to multiple roles check
+            sampling_user_col = st.selectbox("Select the User Identifier Column for Sampling", matched_data.columns, key="sampling_user_col")
+            sampling_role_col = st.selectbox("Select the Role Column for Sampling", matched_data.columns, key="sampling_role_col")
 
-                sample_buffer = io.BytesIO()
-                with pd.ExcelWriter(sample_buffer, engine="xlsxwriter") as writer:
-                    sample_df.to_excel(writer, index=False, sheet_name="RandomSample")
+            if sampling_user_col and sampling_role_col:
+                try:
+                    # Get unique combinations of user and role
+                    unique_combinations = matched_data[[sampling_user_col, sampling_role_col]].drop_duplicates()
+                    max_samples = len(unique_combinations)
+                    
+                    st.info(f"📊 Found {max_samples} unique user-role combinations available for sampling")
+                    
+                    sample_size = st.number_input(
+                        "Enter number of unique user-role combinations to sample", 
+                        min_value=1, 
+                        max_value=max_samples, 
+                        value=min(5, max_samples)
+                    )
 
-                st.download_button(
-                    label="📥 Download Random Sample",
-                    data=sample_buffer.getvalue(),
-                    file_name=f"Random_Sample_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                    if st.button("Generate Sample"):
+                        # Sample unique combinations first
+                        sampled_combinations = unique_combinations.sample(n=sample_size, random_state=42)
+                        
+                        # Create a list to store all matching records
+                        sample_records = []
+                        
+                        # For each sampled combination, get all matching records from original data
+                        for _, row in sampled_combinations.iterrows():
+                            user_id = row[sampling_user_col]
+                            role = row[sampling_role_col]
+                            
+                            # Find all records matching this user-role combination
+                            matching_records = matched_data[
+                                (matched_data[sampling_user_col] == user_id) & 
+                                (matched_data[sampling_role_col] == role)
+                            ]
+                            sample_records.append(matching_records)
+                        
+                        # Combine all sample records
+                        if sample_records:
+                            sample_df = pd.concat(sample_records, ignore_index=True)
+                            
+                            st.success(f"✅ Generated sample with {len(sample_df)} records from {sample_size} unique user-role combinations")
+                            st.dataframe(sample_df, height=400, use_container_width=True)
+                            
+                            # Show summary of sampled combinations
+                            st.subheader("📋 Sampled User-Role Combinations Summary")
+                            summary_df = sample_df.groupby([sampling_user_col, sampling_role_col]).size().reset_index(name='Record_Count')
+                            st.dataframe(summary_df, use_container_width=True)
+
+                            # Download functionality
+                            sample_buffer = io.BytesIO()
+                            with pd.ExcelWriter(sample_buffer, engine="xlsxwriter") as writer:
+                                sample_df.to_excel(writer, index=False, sheet_name="UserRoleSample")
+                                summary_df.to_excel(writer, index=False, sheet_name="SampleSummary")
+
+                            st.download_button(
+                                label="📥 Download User-Role Sample",
+                                data=sample_buffer.getvalue(),
+                                file_name=f"UserRole_Sample_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.error("❌ No records found for the sampled combinations")
+                            
+                except Exception as e:
+                    st.error(f"Error during user-role sampling: {e}")
+            else:
+                st.warning("⚠️ Please select both User Identifier and Role columns to enable sampling")
 
             # --- Multiple Roles Check ---
             st.markdown("---")
@@ -595,3 +874,41 @@ elif module == "User Access Management":
                         file_name="missing_data_summary.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+
+
+
+
+
+
+            # --- Role Consistency Check for IT vs Non-IT ---
+            st.markdown("---")
+            st.subheader("🔐 IT vs Non-IT Access Validation")
+
+            dept_col = st.selectbox("Select Department Column", matched_data.columns, key="dept_check")
+            role_col = st.selectbox("Select Role/Access Column", matched_data.columns, key="role_check")
+
+            if dept_col and role_col:
+                try:
+                    it_roles = set(matched_data[matched_data[dept_col].str.lower().str.contains("it|information technology|i\.t\.", case=False, na=False)][role_col].dropna().unique())
+                    non_it_roles = set(matched_data[~matched_data[dept_col].str.lower().str.contains("it|information technology|i\.t\.", case=False, na=False)][role_col].dropna().unique())
+                    common_roles = it_roles & non_it_roles
+
+                    if common_roles:
+                        flagged_df = matched_data[matched_data[role_col].isin(common_roles)]
+                        st.warning("⚠️ Common roles found between IT and non-IT users:")
+                        st.dataframe(flagged_df)
+
+                        flagged_buffer = io.BytesIO()
+                        with pd.ExcelWriter(flagged_buffer, engine="xlsxwriter") as writer:
+                            flagged_df.to_excel(writer, index=False, sheet_name="IT_NonIT_Conflict")
+
+                        st.download_button(
+                            label="📥 Download Flagged Records",
+                            data=flagged_buffer.getvalue(),
+                            file_name=f"IT_NonIT_Conflicts_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.success("✅ No common roles between IT and non-IT users.")
+                except Exception as e:
+                    st.error(f"Error during IT vs Non-IT access comparison: {e}")
