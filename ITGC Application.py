@@ -5,6 +5,8 @@ import io
 import datetime
 import random
 from dateutil import parser
+from typing import Optional
+
 
 def robust_parse_date(date_val):
     try:
@@ -1092,4 +1094,5 @@ elif module == "User Access Management":
                         st.success("✅ No common roles between IT and non-IT users.")
                 except Exception as e:
                     st.error(f"Error during IT vs Non-IT access comparison: {e}")
+
 
