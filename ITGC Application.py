@@ -4,39 +4,51 @@ from io import BytesIO
 import io
 import datetime
 import random
+from dateutil import parser
+
+def robust_parse_date(date_val):
+    try:
+        return parser.parse(str(date_val), dayfirst=False, yearfirst=False)
+    except Exception:
+        try:
+            return parser.parse(str(date_val), dayfirst=True, yearfirst=False)
+        except Exception:
+            return pd.NaT
 
 st.set_page_config(page_title="ITGC Application", layout="wide")
 st.title("📊 ITGC Application")
 
 # User selection
 module = st.radio("Select Module", ["User Access Management", "Incident Management", "Change Management"])
-
+ 
 # -------------------------
 # 🔁 CHANGE MANAGEMENT FLOW
 # -------------------------
 if module == "Change Management":
-    uploaded_file = st.file_uploader("Upload Change Management File (CSV or Excel)", type=["csv", "xlsx"])
-
+ 
+    # ✅ Always initialize session state for df_checked
     if "df_checked" not in st.session_state:
         st.session_state.df_checked = None
-
+ 
+    uploaded_file = st.file_uploader("Upload Change Management File (CSV or Excel)", type=["csv", "xlsx"])
+ 
     if uploaded_file:
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
-
+ 
         st.subheader("Select Relevant Columns")
         columns = df.columns.tolist()
         col_request_id = st.selectbox("Request ID Column", columns)
         columns_with_none = ["None"] + columns
         col_raised_date = st.selectbox("Raised Date Column", columns_with_none)
         col_resolved_date = st.selectbox("Resolved Date Column", columns_with_none)
-
+ 
         if st.button("Run Check"):
             df_checked = df.copy()
             df_checked.rename(columns={col_request_id: "request_id"}, inplace=True)
-
+ 
             if col_raised_date != "None":
                 df_checked.rename(columns={col_raised_date: "raised_date"}, inplace=True)
                 df_checked["raised_date"] = pd.to_datetime(df_checked["raised_date"], errors='coerce')
@@ -44,7 +56,7 @@ if module == "Change Management":
             else:
                 df_checked["raised_date"] = pd.NaT
                 df_checked["missing_raised"] = False
-
+ 
             if col_resolved_date != "None":
                 df_checked.rename(columns={col_resolved_date: "resolved_date"}, inplace=True)
                 df_checked["resolved_date"] = pd.to_datetime(df_checked["resolved_date"], errors='coerce')
@@ -52,60 +64,120 @@ if module == "Change Management":
             else:
                 df_checked["resolved_date"] = pd.NaT
                 df_checked["missing_resolved"] = False
-
+ 
             if col_raised_date != "None" and col_resolved_date != "None":
                 df_checked["resolved_before_raised"] = df_checked["resolved_date"] < df_checked["raised_date"]
                 df_checked["days_to_resolve"] = (df_checked["resolved_date"] - df_checked["raised_date"]).dt.days
             else:
                 df_checked["resolved_before_raised"] = False
                 df_checked["days_to_resolve"] = None
-
+ 
             st.session_state.df_checked = df_checked
-
+ 
             st.subheader("📊 Summary of Findings")
             st.write(f"Missing Raised Dates: {df_checked['missing_raised'].sum()}")
             st.write(f"Missing Resolved Dates: {df_checked['missing_resolved'].sum()}")
             st.write(f"Resolved Before Raised: {df_checked['resolved_before_raised'].sum()}")
-
+ 
             output = BytesIO()
             df_checked.to_excel(output, index=False)
             output.seek(0)
             st.download_button("📥 Download Full Data with Checks", data=output,
                                file_name="checked_change_management.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+ 
     if st.session_state.df_checked is not None:
+        df = st.session_state.df_checked
+ 
         st.subheader("📄 Full Data with Calculated Fields")
-        st.dataframe(st.session_state.df_checked)
-
-        st.subheader("🎯 Sampling Section")
-        sampling_column = st.selectbox("Select Column for Sampling", st.session_state.df_checked.columns.tolist())
-        sample_size = st.number_input("Number of Samples", min_value=1, max_value=len(st.session_state.df_checked), value=5, step=1)
-        method = st.selectbox("Sampling Method", ["Top N (Longest)", "Bottom N (Quickest)", "Random"])
-
-        if method == "Top N (Longest)":
-            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=False).head(sample_size)
-        elif method == "Bottom N (Quickest)":
-            sample_df = st.session_state.df_checked.sort_values(by=sampling_column, ascending=True).head(sample_size)
-        else:
-            sample_df = st.session_state.df_checked.sample(n=sample_size, random_state=1)
-
-        st.write("📊 Sampled Records")
-        st.dataframe(sample_df)
-
-        sample_output = BytesIO()
-        sample_df.to_excel(sample_output, index=False)
-        sample_output.seek(0)
-        st.download_button("📥 Download Sample Records", data=sample_output,
-                           file_name="sampled_requests.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+        st.dataframe(df)
+ 
+        full_data_output = BytesIO()
+        df.to_excel(full_data_output, index=False)
+        full_data_output.seek(0)
+        st.download_button(
+            "📥 Download Full Data",
+            data=full_data_output,
+            file_name="full_data_with_calculated_fields.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+ 
+        st.subheader("🎯 Priority-Based Sampling Section")
+ 
+        priority_column = st.selectbox(
+            "Select Priority Column",
+            df.columns.tolist(),
+            key="priority_column_priority_sample"
+        )
+ 
+        metric_column = st.selectbox(
+            "Select Metric Column for Sampling",
+            df.columns.tolist(),
+            key="metric_column_priority_sample"
+        )
+ 
+        num_samples = st.number_input(
+            "🎯 Total Number of Samples (divided across priorities)",
+            min_value=1,
+            max_value=1000,
+            value=15,
+            step=1,
+            key="sample_size_priority_sample"
+        )
+ 
+        if st.button("Run Priority Sampling", key="run_priority_sampling"):
+            sampled_frames = []
+            unique_priorities = df[priority_column].dropna().unique()
+            num_priorities = len(unique_priorities)
+ 
+            if num_priorities == 0:
+                st.warning("No unique priorities found.")
+            else:
+                total_needed = num_samples
+                samples_per_priority = total_needed // num_priorities
+                remainder = total_needed % num_priorities
+ 
+                for i, priority in enumerate(unique_priorities):
+                    n_samples = samples_per_priority + (1 if i < remainder else 0)
+                    top_n = n_samples // 2
+                    bottom_n = n_samples - top_n
+ 
+                    subset = df[df[priority_column] == priority]
+ 
+                    try:
+                        top_rows = subset.sort_values(by=metric_column, ascending=False).head(top_n)
+                        bottom_rows = subset.sort_values(by=metric_column, ascending=True).head(bottom_n)
+                    except Exception as e:
+                        st.error(f"Error sorting by {metric_column}: {e}")
+                        continue
+ 
+                    top_rows["sampling_type"] = f"Top - {priority}"
+                    bottom_rows["sampling_type"] = f"Bottom - {priority}"
+                    sampled_frames.extend([top_rows, bottom_rows])
+ 
+                if sampled_frames:
+                    priority_sample_df = pd.concat(sampled_frames).drop_duplicates().head(num_samples)
+                    st.write("📊 Priority-Based Sampled Records")
+                    st.dataframe(priority_sample_df)
+ 
+                    sample_output = BytesIO()
+                    priority_sample_df.to_excel(sample_output, index=False)
+                    sample_output.seek(0)
+                    st.download_button(
+                        "📥 Download Priority-Based Samples",
+                        data=sample_output,
+                        file_name="priority_based_samples.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No records found for sampling.")
+ 
 # -------------------------
 # 🧯 INCIDENT MANAGEMENT FLOW
 # -------------------------
 elif module == "Incident Management":
     uploaded_file = st.file_uploader("Upload Incident Management File (Excel or CSV)", type=["csv", "xlsx"])
-
+ 
     def load_data(uploaded_file):
         if uploaded_file is not None:
             if uploaded_file.name.endswith('.csv'):
@@ -113,7 +185,7 @@ elif module == "Incident Management":
             elif uploaded_file.name.endswith('.xlsx'):
                 return pd.read_excel(uploaded_file)
         return None
-
+ 
     def calculate_date_differences(df, start_col, end_col, resolved_col):
         if start_col != "None":
             df[start_col] = pd.to_datetime(df[start_col], errors='coerce')
@@ -121,121 +193,136 @@ elif module == "Incident Management":
             df[resolved_col] = pd.to_datetime(df[resolved_col], errors='coerce')
         if end_col != "None":
             df[end_col] = pd.to_datetime(df[end_col], errors='coerce')
-
+ 
         if start_col != "None" and resolved_col != "None":
             df['Start-Resolved'] = (df[resolved_col] - df[start_col]).dt.days
         else:
             df['Start-Resolved'] = None
-
+ 
         if resolved_col != "None" and end_col != "None":
             df['Resolved-Close'] = (df[end_col] - df[resolved_col]).dt.days
         else:
             df['Resolved-Close'] = None
-
+ 
         return df
-
+ 
+    def flexible_priority_sampling(df, priority_column, sort_column, total_samples=3):
+        df_clean = df.dropna(subset=[priority_column, sort_column])
+        df_clean[priority_column] = df_clean[priority_column].astype(str).str.strip()
+ 
+        priorities = df_clean[priority_column].unique()
+        num_priorities = len(priorities)
+ 
+        if total_samples < num_priorities:
+            priorities = priorities[:total_samples]
+            num_priorities = total_samples
+ 
+        samples_per_priority = total_samples // num_priorities
+        remaining = total_samples % num_priorities
+ 
+        sampled_df = pd.DataFrame()
+        summary = {}
+ 
+        for i, priority in enumerate(priorities):
+            subset = df_clean[df_clean[priority_column] == priority]
+            n_samples = samples_per_priority + (1 if i < remaining else 0)
+ 
+            sample = subset.sample(n=min(len(subset), n_samples), random_state=42)
+            sampled_df = pd.concat([sampled_df, sample])
+ 
+            summary[priority] = {
+                "total_records": len(subset),
+                "samples_taken": len(sample),
+                "sampling_method": "Random sampling"
+            }
+ 
+        return sampled_df, summary
+ 
     if uploaded_file:
         df = load_data(uploaded_file)
-
+ 
         if df is not None:
             st.subheader("📋 Incident Management Columns")
-            st.write("Data preview:", df.head())
-
+            st.dataframe(df.head())
+ 
             columns_with_none = ["None"] + df.columns.tolist()
             start_col = st.selectbox("Select Start Date Column", columns_with_none)
             resolved_col = st.selectbox("Select Resolved Date Column", columns_with_none)
             end_col = st.selectbox("Select Close/End Date Column", columns_with_none)
-
+ 
             df = calculate_date_differences(df, start_col, end_col, resolved_col)
-
-            st.write("✅ Updated Data with Date Differences:")
-            st.dataframe(df,height=200, use_container_width=True)
-
-            st.download_button("📥 Download Updated File", data=df.to_csv(index=False).encode("utf-8"),
+ 
+            st.subheader("✅ Updated Data with Date Differences:")
+            st.dataframe(df, use_container_width=True, height=250)
+ 
+            st.download_button("📅 Download Updated File", data=df.to_csv(index=False).encode("utf-8"),
                                file_name="updated_incidents.csv", mime="text/csv")
-
-            # 🔁 Random Sampling
-            st.subheader("🎯 Random Sampling")
-            sample_size = st.number_input("Number of Random Samples", min_value=1, max_value=len(df), value=5)
-            if st.button("Generate Incident Sample"):
-                sample_df = df.sample(n=sample_size, random_state=42)
-                st.dataframe(sample_df,height=300, use_container_width=True)
-
-                sample_buffer = BytesIO()
-                sample_df.to_csv(sample_buffer, index=False)
-                st.download_button("📥 Download Sample Records", data=sample_buffer.getvalue(),
-                                   file_name="incident_sample.csv", mime="text/csv")
-                
-            st.subheader("⚠️ Risk Category Threshold Check")
-            risk_col = st.selectbox("Select Risk Level Column", df.columns)
-
-            if risk_col:
-                # Extract last word (risk level) regardless of delimiter or format
-                df["Parsed_Risk_Level"] = df[risk_col].astype(str).str.extract(r'([Cc]ritical|[Hh]igh|[Mm]edium|[Ll]ow)', expand=False).str.capitalize()
-
-                st.markdown("Define SLA thresholds (in days) for each risk level:")
-
-                # Start-Resolved thresholds
-                crit_threshold = st.number_input("Critical Risk Threshold (Start-Resolved)", min_value=0, value=1)
-                high_threshold = st.number_input("High Risk Threshold (Start-Resolved)", min_value=0, value=2)
-                
-                med_threshold = st.number_input("Medium Risk Threshold (Start-Resolved)", min_value=0, value=4)
-                low_threshold = st.number_input("Low Risk Threshold (Start-Resolved)", min_value=0, value=6)
-
-                # Resolved-Close thresholds
-                crit_close_threshold = st.number_input("Critical Risk Threshold (Resolved-Close)", min_value=0, value=1)
-                high_close_threshold = st.number_input("High Risk Threshold (Resolved-Close)", min_value=0, value=1)
-                med_close_threshold = st.number_input("Medium Risk Threshold (Resolved-Close)", min_value=0, value=2)
-                low_close_threshold = st.number_input("Low Risk Threshold (Resolved-Close)", min_value=0, value=3)
-
-                # Apply filters
-                def exceeds_threshold(row):
-                    risk = row["Parsed_Risk_Level"]
-                    if risk == "Critical":
-                        return (
-                            (row["Start-Resolved"] is not None and row["Start-Resolved"] > crit_threshold) or
-                            (row["Resolved-Close"] is not None and row["Resolved-Close"] > crit_close_threshold)
+ 
+            # 🖁 Enhanced Priority-Based Sampling for Incidents
+            st.subheader("🌿 Enhanced Priority-Based Sampling")
+ 
+            priority_columns = [col for col in df.columns if
+                                any(keyword in col.lower() for keyword in ['priority', 'risk', 'severity', 'impact', 'urgency'])]
+ 
+            if priority_columns:
+                st.info("💡 Detected potential priority columns. Select the appropriate one for sampling.")
+ 
+            priority_column = st.selectbox("Select Priority/Risk Column for Incidents", df.columns.tolist())
+            sort_column = st.selectbox("Select Column for Sorting", df.columns.tolist())
+ 
+            sample_size_incidents = st.number_input("Samples per Priority Level (total)", min_value=1, max_value=10, value=3, step=1)
+ 
+            col1, col2 = st.columns(2)
+ 
+            with col1:
+                if st.button("🎲 Generate Priority-Based Sample for Incidents", key="priority_sample_incidents"):
+                    sample_df, summary = flexible_priority_sampling(
+                        df,
+                        priority_column,
+                        sort_column,
+                        sample_size_incidents
+                    )
+ 
+                    if not sample_df.empty:
+                        st.success(f"✅ Generated {len(sample_df)} incident sample records")
+ 
+                        st.subheader("📈 Incident Sampling Summary")
+                        for priority, stats in summary.items():
+                            st.write(f"**{priority} Priority:**")
+                            st.write(f"  - Total Records: {stats['total_records']}")
+                            st.write(f"  - Samples Taken: {stats['samples_taken']}")
+                            st.write(f"  - Method: {stats['sampling_method']}")
+ 
+                        st.subheader("📊 Priority-Based Incident Sample")
+                        st.dataframe(sample_df, use_container_width=True, height=300, hide_index=True)
+ 
+                        sample_buffer = BytesIO()
+                        with pd.ExcelWriter(sample_buffer, engine='xlsxwriter') as writer:
+                            sample_df.to_excel(writer, sheet_name='Priority_Sample', index=False)
+                            summary_df = pd.DataFrame.from_dict(summary, orient='index')
+                            summary_df.to_excel(writer, sheet_name='Sampling_Summary')
+ 
+                        sample_buffer.seek(0)
+                        st.download_button(
+                            "📅 Download Priority-Based Incident Sample",
+                            data=sample_buffer.getvalue(),
+                            file_name="priority_based_incident_sample.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
-                    elif risk == "High":
-                        return (
-                            (row["Start-Resolved"] is not None and row["Start-Resolved"] > high_threshold) or
-                            (row["Resolved-Close"] is not None and row["Resolved-Close"] > high_close_threshold)
-                        )
-                    elif risk == "Medium":
-                        return (
-                            (row["Start-Resolved"] is not None and row["Start-Resolved"] > med_threshold) or
-                            (row["Resolved-Close"] is not None and row["Resolved-Close"] > med_close_threshold)
-                        )
-                    elif risk == "Low":
-                        return (
-                            (row["Start-Resolved"] is not None and row["Start-Resolved"] > low_threshold) or
-                            (row["Resolved-Close"] is not None and row["Resolved-Close"] > low_close_threshold)
-                        )
-                    return False
-
-                df["Exceeds_Threshold"] = df.apply(exceeds_threshold, axis=1)
-                observations_df = df[df["Exceeds_Threshold"] == True]
-
-                if not observations_df.empty:
-                    st.warning(f"{len(observations_df)} record(s) exceeded the threshold limits.")
-                    st.dataframe(observations_df, height=200, use_container_width=True)
-
-                    obs_buffer = BytesIO()
-                    observations_df.to_csv(obs_buffer, index=False)
-                    st.download_button("📥 Download Observations File", data=obs_buffer.getvalue(),
-                                    file_name="incident_observations.csv", mime="text/csv")
-                else:
-                    st.success("✅ All records are within threshold limits.")
-                
-                # ✅ Download full dataset with flags
-                st.subheader("📥 Download Full Data with SLA Checks")
-                full_buffer = BytesIO()
-                with pd.ExcelWriter(full_buffer, engine="xlsxwriter") as writer:
-                    df.to_excel(writer, index=False, sheet_name="Full_Data")
-                st.download_button("Download Full Incident Data", data=full_buffer.getvalue(),
-                                file_name="incident_full_data.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+                    else:
+                        st.warning("⚠️ No valid priority data found for incident sampling")
+ 
+            with col2:
+                st.subheader("🎲 Traditional Random Sampling")
+                sample_size = st.number_input("Number of Random Samples", min_value=1, max_value=len(df), value=5)
+                if st.button("Generate Traditional Incident Sample"):
+                    sample_df = df.sample(n=sample_size, random_state=42)
+                    st.dataframe(sample_df, use_container_width=True, height=300)
+ 
+                    sample_buffer = BytesIO()
+                    sample_df.to_csv(sample_buffer, index=False)
+                    st.download_button("📥 Download Traditional Sample", data=sample_buffer.getvalue(),
+                                       file_name="traditional_incident_sample.csv", mime="text/csv")
 # -------------------------
 # 🔍 USER ACCESS FLOW
 # -------------------------
@@ -377,6 +464,12 @@ elif module == "User Access Management":
                 )
 
             # --- Dormancy ---
+            import pandas as pd
+            import datetime
+            from io import BytesIO
+            import matplotlib.pyplot as plt
+            import streamlit as st
+
             st.markdown("---")
             st.subheader("📅 Dormancy & GAP Analysis")
 
@@ -464,10 +557,10 @@ elif module == "User Access Management":
                             st.markdown("### 🔍 **Observation Summary**")
                             if status_filter_applied:
                                 observation_text = (
-                                    f"During testing, we analyzed data extracts from the HRMS and Active Directory (AD) and identified inconsistencies. Specifically, last logon activity in User List, we found that approximately, **{dormant_count} unique active users** "
-                                    f"have their dormancy exceed the **{threshold}-day dormancy policy.** The duration of these overlaps ranged from "
+                                    f"During dormancy analysis of our system, **{dormant_count} unique active users** "
+                                    f"have their dormancy exceed the **{threshold}-day threshold** by a range of "
                                     f"**{min_days_over} to {max_days_over} days**. These accounts are marked as active "
-                                    f"({', '.join(map(str, active_statuses))}) but have not logged in within the specified timeframe as mentioned in the dormancy policy."
+                                    f"({', '.join(map(str, active_statuses))}) but have not logged in within the specified timeframe."
                                 )
                             else:
                                 observation_text = (
@@ -501,17 +594,13 @@ elif module == "User Access Management":
                             st.subheader("📈 Records Exceeding vs Within Threshold")
                             st.caption(f"Analysis of {filter_description}")
 
-                            import matplotlib.pyplot as plt
-                            from io import BytesIO
-                            import streamlit as st
-
                             # Pie chart data
                             sizes = [dormant_count, within_count]
                             labels = ["Exceeded", "Within"]
                             colors = ["#ff6666", "#66b3ff"]
 
                             # Create a larger, clearer figure with white background
-                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')  # ~375px x 375px
+                            fig, ax = plt.subplots(figsize=(3.75, 3.75), dpi=100, facecolor='white')
 
                             # Plot the pie
                             wedges, texts, autotexts = ax.pie(
@@ -568,8 +657,29 @@ elif module == "User Access Management":
                             else:
                                 export_df = dormant_df
 
+                            # Create Excel file with observation summary at the top
                             buffer = BytesIO()
-                            export_df.to_excel(buffer, index=False)
+                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                # Create a summary sheet with observation text
+                                summary_data = {
+                                    'Dormancy Analysis Summary': [
+                                        f"Analysis Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                        f"Threshold: {threshold} days",
+                                        f"Total Accounts Analyzed: {analysis_total}",
+                                        f"Accounts Exceeding Threshold: {dormant_count}",
+                                        f"Range of Days Over Threshold: {min_days_over} to {max_days_over} days",
+                                        "",
+                                        # Clean version of observation text (remove markdown formatting)
+                                        observation_text.replace("**", "").replace("*", "")
+                                    ]
+                                }
+                                
+                                summary_df = pd.DataFrame(summary_data)
+                                summary_df.to_excel(writer, sheet_name='Summary', index=False, header=False)
+                                
+                                # Add the actual data to a separate sheet
+                                export_df.to_excel(writer, sheet_name='Dormant_Accounts', index=False)
+
                             buffer.seek(0)
 
                             file_suffix = "active_dormant" if status_filter_applied else "all_dormant"
@@ -589,10 +699,11 @@ elif module == "User Access Management":
 
                 except Exception as e:
                     st.error(f"Error processing GAP calculation: {e}")
-                    
+            
             # --- AD-HR Join Date Difference ---
             st.markdown("---")
             st.subheader("📐 AD - HR Joining Date Difference")
+
             ad_join_col = st.selectbox("Select AD Joining Date Column", matched_data.columns, key="ad_date")
             hr_join_col = st.selectbox("Select HR Joining Date Column", matched_data.columns, key="hr_date")
 
@@ -605,7 +716,38 @@ elif module == "User Access Management":
                 except Exception as e:
                     st.error(f"Error calculating AD-HR difference: {e}")
 
-            st.subheader("📊 Final Data with GAP and AD-HR Columns")
+            # --- Dynamic Date Difference Columns ---
+            st.markdown("---")
+            st.subheader("➕ Add Custom Date Difference Columns")
+
+            if "date_diff_pairs" not in st.session_state:
+                st.session_state.date_diff_pairs = [{"start": None, "end": None}]
+
+            if st.button("➕ Add Another Date Difference Column"):
+                st.session_state.date_diff_pairs.append({"start": None, "end": None})
+
+            for idx, pair in enumerate(st.session_state.date_diff_pairs):
+                cols = st.columns(2)
+                start_col = cols[0].selectbox(f"Start Date Column {idx+1}", matched_data.columns, key=f"start_col_{idx}")
+                end_col = cols[1].selectbox(f"End Date Column {idx+1}", matched_data.columns, key=f"end_col_{idx}")
+                st.session_state.date_diff_pairs[idx]["start"] = start_col
+                st.session_state.date_diff_pairs[idx]["end"] = end_col
+
+            # Calculate and add custom date difference columns
+            for idx, pair in enumerate(st.session_state.date_diff_pairs):
+                start_col = pair["start"]
+                end_col = pair["end"]
+                if start_col and end_col:
+                    col_name = f"{start_col}-{end_col}_Diff"
+                    try:
+                        matched_data[start_col] = pd.to_datetime(matched_data[start_col], errors="coerce")
+                        matched_data[end_col] = pd.to_datetime(matched_data[end_col], errors="coerce")
+                        matched_data[col_name] = (matched_data[end_col] - matched_data[start_col]).dt.days
+                        st.success(f"✅ '{col_name}' column calculated and added.")
+                    except Exception as e:
+                        st.error(f"Error calculating {col_name}: {e}")
+
+            st.subheader("📊 Final Data with GAP, AD-HR, and Custom Difference Columns")
             st.dataframe(matched_data.head())
 
             output_buffer = io.BytesIO()
@@ -616,8 +758,8 @@ elif module == "User Access Management":
                 label="📥 Download Final File with GAP & AD-HR",
                 data=output_buffer.getvalue(),
                 file_name=f"User_Access_Reviewed_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+             )
 
             # --- Random Sampling ---
             st.markdown("---")
@@ -692,34 +834,6 @@ elif module == "User Access Management":
                     st.error(f"Error during user-role sampling: {e}")
             else:
                 st.warning("⚠️ Please select both User Identifier and Role columns to enable sampling")
-            # --- AD-HR Join Date Difference (Dynamic) ---
-            st.markdown("---")
-            st.subheader("📐 Date Difference Calculator")
-            
-            # Initialise list in session state
-            if "diff_pairs" not in st.session_state:
-                st.session_state.diff_pairs = [("ad_date", "hr_date")]  # default first pair
-            
-            # Add new pair on "+" button click
-            if st.button("➕ Add Difference"):
-                st.session_state.diff_pairs.append((None, None))
-            
-            # Loop through each pair and get user selections
-            for idx, (col_a, col_b) in enumerate(st.session_state.diff_pairs):
-                st.markdown(f"**Difference {idx+1}**")
-                col1 = st.selectbox(f"Select Column A", matched_data.columns, key=f"colA_{idx}")
-                col2 = st.selectbox(f"Select Column B", matched_data.columns, key=f"colB_{idx}")
-            
-                if col1 and col2:
-                    try:
-                        matched_data[col1] = pd.to_datetime(matched_data[col1], errors="coerce")
-                        matched_data[col2] = pd.to_datetime(matched_data[col2], errors="coerce")
-                        diff_col_name = f"{col1}-{col2}_Days"
-                        matched_data[diff_col_name] = (matched_data[col1] - matched_data[col2]).dt.days
-                        st.success(f"✅ '{diff_col_name}' column calculated and added.")
-                    except Exception as e:
-                        st.error(f"Error calculating {col1}-{col2} difference: {e}")
-            
 
             # --- Multiple Roles Check ---
             st.markdown("---")
@@ -842,5 +956,3 @@ elif module == "User Access Management":
                         st.success("✅ No common roles between IT and non-IT users.")
                 except Exception as e:
                     st.error(f"Error during IT vs Non-IT access comparison: {e}")
-
-
