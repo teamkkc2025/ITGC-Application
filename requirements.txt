@@ -4,3 +4,29 @@ openpyxl
 xlsxwriter
 Optional
 matplotlib
+# Core Streamlit and Data Processing
+streamlit==1.28.0
+pandas==2.0.3
+numpy==1.24.3
+python-dateutil==2.8.2
+
+# Azure AI Services
+azure-ai-anomalydetector==3.0.0b6
+azure-ai-textanalytics==5.3.0
+azure-identity==1.15.0
+azure-core==1.29.5
+
+# Environment and Configuration
+python-dotenv==1.0.0
+
+# Data Visualization
+matplotlib==3.7.2
+seaborn==0.12.2
+
+# File Processing
+openpyxl==3.1.2
+xlsxwriter==3.1.9
+
+# Additional Dependencies
+requests==2.31.0
+typing-extensions==4.8.0
